@@ -1,0 +1,99 @@
+name: Auto Update JioTV Cookies (Fixed Path and Force Update Every 12 Hours)
+on:
+  schedule:
+    - cron: '0 */12 * * *' # Har 12 ghante (5:30 AM aur 5:30 PM IST)
+  workflow_dispatch: # Manual trigger
+jobs:
+  update-cookies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Fetch and Debug new URL
+        run: |
+          echo "=== Fetching from https://doctor-strange.developed-for-wanda.workers.dev/ ==="
+          curl -s https://doctor-strange.developed-for-wanda.workers.dev/ > stream.json
+          if [ ! -s stream.json ]; then
+            echo "✗ ERROR: Failed to fetch stream.json. File is empty."
+            exit 1
+          fi
+          echo "File size: $(wc -c < stream.json) bytes"
+          echo "Full stream.json preview (first 1000 chars):"
+          head -c 1000 stream.json | tr -d '\n' | sed 's/"/\\"/g' | fold -w 80
+          echo "Searching for JITENDRAUNATTI.JIOTV.hmac.hdnea.value..."
+          if jq -e '.JITENDRAUNATTI.JIOTV.hmac.hdnea.value' stream.json >/dev/null 2>&1; then
+            echo "✓ JITENDRAUNATTI.JIOTV.hmac.hdnea.value found in file!"
+          else
+            echo "✗ JITENDRAUNATTI.JIOTV.hmac.hdnea.value NOT found. Dumping first 200 lines:"
+            head -n 200 stream.json
+            exit 1
+          fi
+      - name: Extract Cookie and Update Jiotv.json
+        run: |
+          echo "=== Extracting Cookie ==="
+          # Extract cookie from JITENDRAUNATTI.JIOTV.hmac.hdnea.value with error handling
+          NEW_COOKIE=$(jq -r '.JITENDRAUNATTI.JIOTV.hmac.hdnea.value' stream.json 2>/dev/null || echo "null")
+          if [ "$NEW_COOKIE" = "null" ]; then
+            echo "✗ ERROR: No valid cookie found in JITENDRAUNATTI.JIOTV.hmac.hdnea.value. Update skipped."
+            echo "Raw stream.json content (first 200 lines):"
+            head -n 200 stream.json
+            exit 0
+          fi
+          echo "✓ Full cookie extracted: $NEW_COOKIE"
+
+          echo "=== Updating Jiotv.json ==="
+          cp Jiotv.json Jiotv_backup.json
+          # Validate Jiotv.json and attempt detailed recovery
+          if [ ! -s Jiotv_backup.json ]; then
+            echo "✗ ERROR: Jiotv.json is empty or missing. Creating a basic structure."
+            echo '[]' > Jiotv_backup.json
+          fi
+          if ! jq -e . Jiotv_backup.json >/dev/null 2>&1; then
+            echo "✗ WARNING: Jiotv.json is invalid JSON (line 7323 issue?). Attempting recovery..."
+            tail -n +7313 Jiotv_backup.json > temp_backup.json
+            mv temp_backup.json Jiotv_backup.json
+            if ! jq -e . Jiotv_backup.json >/dev/null 2>&1; then
+              echo "✗ ERROR: Recovery failed. Dumping problematic area (lines 7313-7323):"
+              sed -n '7313,7323p' Jiotv_backup.json
+              echo "Creating a fallback JSON with cookie."
+              echo '[{"cookie": "'"$NEW_COOKIE"'"}]' > Jiotv_backup.json
+            fi
+          fi
+          # Update only the cookie field in each object, preserving other fields
+          jq --arg new_cookie "$NEW_COOKIE" 'map(if .cookie then .cookie = $new_cookie else . + {"cookie": $new_cookie} end)' Jiotv_backup.json > Jiotv_updated.json
+          mv Jiotv_updated.json Jiotv.json
+
+          echo "✓ Update complete. New cookie: $NEW_COOKIE"
+          echo "Preview of updated Jiotv.json (first entry's cookie):"
+          jq '.[0].cookie' Jiotv.json 2>/dev/null || echo "No valid JSON to preview"
+          echo "Full updated Jiotv.json preview (first 200 chars):"
+          head -c 200 Jiotv.json
+
+          if ! diff -q Jiotv_backup.json Jiotv.json; then
+            echo "✓ File changed!"
+          else
+            echo "✗ No change detected (possible issue with structure or same cookie)."
+          fi
+      - name: Force Commit Changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add Jiotv.json
+          # Always force commit with a hidden file to ensure push
+          touch .force-update-timestamp
+          git add .force-update-timestamp
+          git commit -m "Force auto-update cookies in Jiotv.json (new: ${{ github.sha }}) --no-verify" || {
+            echo "✗ ERROR: Commit failed. Creating fallback commit."
+            echo '{"update": "forced"}' > .force-commit.json
+            git add .force-commit.json
+            git commit -m "Fallback force update (new: ${{ github.sha }}) --no-verify"
+          }
+          git push || {
+            echo "✗ ERROR: Git push failed. Checking GITHUB_TOKEN or repo permissions."
+            echo "Dumping git status:"
+            git status
+            exit 1
+          }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
