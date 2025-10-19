@@ -2,8 +2,11 @@ name: Update JioTV Playlist Cookies
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Runs every 6 hours
-  workflow_dispatch: # Allows manual trigger
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   update-cookies:
@@ -29,6 +32,7 @@ jobs:
           import json
           import requests
           from urllib.parse import urlparse, parse_qs
+          import time
 
           # Configuration
           API_URL = "https://jo-json.vodep39240327.workers.dev"
@@ -46,31 +50,34 @@ jobs:
               except:
                   return None
 
-          def fetch_single_cookie():
-              """Fetch a single __hdnea__ cookie from the API."""
-              try:
-                  response = requests.get(API_URL)
-                  response.raise_for_status()
-                  data = response.json()
-                  print(f"Fetched API data for {len(data)} channels")
-                  # Pick the first valid cookie from the API response
-                  for channel_id, info in data.items():
-                      if isinstance(info, dict) and "url" in info:
-                          cookie = extract_hdnea_from_url(info["url"])
-                          if cookie:
-                              print(f"Using cookie from channel ID {channel_id}: {cookie}")
-                              return cookie
-                  print("No valid cookies found in API response")
-                  return None
-              except requests.RequestException as e:
-                  print(f"Error fetching data from {API_URL}: {e}")
-                  return None
-              except ValueError as e:
-                  print(f"Error parsing JSON from {API_URL}: {e}")
-                  return None
+          def fetch_single_cookie(max_retries=3, delay=5):
+              """Fetch a single __hdnea__ cookie from the API with retries."""
+              for attempt in range(max_retries):
+                  try:
+                      response = requests.get(API_URL, timeout=10)
+                      response.raise_for_status()
+                      data = response.json()
+                      print(f"Fetched API data for {len(data)} channels")
+                      for channel_id, info in data.items():
+                          if isinstance(info, dict) and "url" in info:
+                              cookie = extract_hdnea_from_url(info["url"])
+                              if cookie:
+                                  print(f"Using cookie from channel ID {channel_id}: {cookie}")
+                                  return cookie
+                      print("No valid cookies found in API response")
+                      return None
+                  except requests.RequestException as e:
+                      print(f"Attempt {attempt + 1}/{max_retries} - Error fetching data from {API_URL}: {e}")
+                      if attempt < max_retries - 1:
+                          time.sleep(delay)
+                      continue
+                  except ValueError as e:
+                      print(f"Error parsing JSON from {API_URL}: {e}")
+                      return None
+              print(f"Failed to fetch cookie after {max_retries} attempts")
+              return None
 
           def update_playlist_cookies():
-              # Read the existing playlist
               try:
                   with open(PLAYLIST_FILE, "r") as file:
                       playlist = json.load(file)
@@ -78,13 +85,11 @@ jobs:
                   print(f"Error reading {PLAYLIST_FILE}: {e}")
                   return
 
-              # Fetch a single cookie from API
               new_cookie = fetch_single_cookie()
               if not new_cookie:
                   print("No valid cookie retrieved from API, exiting.")
                   return
 
-              # Update the same cookie for all channels
               updated = False
               for channel in playlist:
                   channel_name = channel.get("name")
@@ -96,7 +101,6 @@ jobs:
                       updated = True
                       print(f"Updated cookie for {channel_name} to {new_cookie}")
 
-              # Save updated playlist if changes were made
               if updated:
                   try:
                       with open(PLAYLIST_FILE, "w") as file:
@@ -116,11 +120,12 @@ jobs:
           git config --global user.name 'GitHub Action'
           git config --global user.email 'action@github.com'
           git add Jiotv.json
-          if git diff --quiet || ! git diff --staged --quiet; then
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes to commit; cookie unchanged or file unmodified"
+          else
             git commit -m "Update single __hdnea__ cookie for all channels in Jiotv.json from API"
             git push
-          else
-            echo "No changes to commit"
+            echo "Changes committed and pushed"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
