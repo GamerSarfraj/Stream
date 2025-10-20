@@ -8,13 +8,15 @@ on:
 jobs:
   update-cookies:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Ensure write access for pushing changes
 
     steps:
       # Checkout the repository
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Full history to ensure git can detect changes
+          fetch-depth: 0 # Full history for git operations
 
       # Set up Python
       - name: Set up Python
@@ -22,11 +24,11 @@ jobs:
         with:
           python-version: '3.x'
 
-      # Install requests library
+      # Install requests and tenacity libraries
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests
+          pip install requests tenacity
 
       # Fetch cookies and update Zootv.json
       - name: Update cookies in Zootv.json
@@ -36,137 +38,118 @@ jobs:
           import json
           import re
           import os
-          import glob
+          from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
           # URL to fetch cookies
           m3u_url = "https://raw.githubusercontent.com/alex8875/m3u/refs/heads/main/jstar.m3u"
 
-          # Fetch the m3u file
-          try:
-            response = requests.get(m3u_url, timeout=10)
-            response.raise_for_status()
-            m3u_content = response.text
-          except requests.RequestException as e:
-            print(f"Error fetching m3u file: {e}")
-            exit(1)
+          # Retry decorator for network requests
+          @retry(
+              stop=stop_after_attempt(3),
+              wait=wait_exponential(multiplier=1, min=4, max=10),
+              retry=retry_if_exception_type(requests.RequestException)
+          )
+          def fetch_m3u():
+              response = requests.get(m3u_url, timeout=10)
+              response.raise_for_status()
+              return response.text
 
-          # Debug: Print m3u content (first 5000 chars)
-          print(f"m3u content (first 5000 chars):\n{m3u_content[:5000]}")
+          # Fetch the m3u file with retries
+          try:
+              m3u_content = fetch_m3u()
+          except requests.RequestException as e:
+              print(f"Error fetching m3u file after retries: {e}")
+              exit(1)
 
           # Extract the first __hdnea__ cookie
           cookie_pattern = r'__hdnea__=[^\s"\n;),]+'
           cookie_match = re.search(cookie_pattern, m3u_content)
           if not cookie_match:
-            fallback_pattern = r'__hdnea__=[^"\n]+'
-            cookie_match = re.search(fallback_pattern, m3u_content)
-            if not cookie_match:
-              print("Error: No __hdnea__ cookie found in the m3u file")
-              exit(1)
+              fallback_pattern = r'__hdnea__=[^"\n;]+'
+              cookie_match = re.search(fallback_pattern, m3u_content)
+              if not cookie_match:
+                  print("Error: No __hdnea__ cookie found in the m3u file")
+                  exit(1)
           new_cookie = cookie_match.group(0).rstrip(';').strip()
-
-          # Debug: Print extracted cookie
           print(f"Extracted cookie: {new_cookie}")
 
           # Path to Zootv.json
           json_file = "Zootv.json"
-
-          # Check for Zootv.json (case-sensitive and case-insensitive)
-          files_in_dir = glob.glob("[Zz][Oo][Oo][Tt][Vv].[Jj][Ss][Oo][Nn]") + os.listdir('.')
-          print(f"Files in current directory: {files_in_dir}")
           if not os.path.exists(json_file):
-            print(f"Error: {json_file} not found in repository root")
-            exit(1)
+              print(f"Error: {json_file} not found in repository root")
+              exit(1)
 
           # Verify file is writable
           try:
-            with open(json_file, 'a') as f:
-              pass  # Test append mode to confirm writability
+              with open(json_file, 'a') as f:
+                  pass  # Test writability
           except Exception as e:
-            print(f"Error: {json_file} is not writable: {e}")
-            exit(1)
+              print(f"Error: {json_file} is not writable: {e}")
+              exit(1)
 
           # Read Zootv.json
           try:
-            with open(json_file, 'r') as f:
-              file_content = f.read()
-              if not file_content.strip():
-                print(f"Error: {json_file} is empty")
-                exit(1)
-              print(f"Raw {json_file} content:\n{file_content[:5000]}")
-              data = json.loads(file_content)
+              with open(json_file, 'r') as f:
+                  file_content = f.read()
+                  if not file_content.strip():
+                      print(f"Error: {json_file} is empty")
+                      exit(1)
+                  data = json.loads(file_content)
           except json.JSONDecodeError as e:
-            print(f"Error: Invalid JSON in {json_file}: {e}")
-            exit(1)
+              print(f"Error: Invalid JSON in {json_file}: {e}")
+              exit(1)
           except Exception as e:
-            print(f"Error reading {json_file}: {e}")
-            exit(1)
+              print(f"Error reading {json_file}: {e}")
+              exit(1)
 
-          # Debug: Print parsed JSON structure
-          print(f"Parsed JSON data:\n{json.dumps(data, indent=2)[:5000]}")
-
-          # Update cookie field for all channels
+          # Update cookie field
           updated = False
           if isinstance(data, list):
-            for index, item in enumerate(data):
-              if not isinstance(item, dict):
-                print(f"Warning: Item at index {index} is not a dictionary, skipping")
-                continue
-              if "cookie" not in item:
-                print(f"Warning: No cookie field in item at index {index} (name: {item.get('name', 'unknown')}), adding cookie field")
-                item["cookie"] = new_cookie
-                updated = True
-                print(f"Added cookie for {item.get('name', 'unknown')} (index {index}): {new_cookie}")
-              else:
-                old_cookie = item["cookie"]
-                item["cookie"] = new_cookie
-                updated = True
-                print(f"Updated cookie for {item.get('name', 'unknown')} (index {index}): {old_cookie} -> {new_cookie}")
+              for index, item in enumerate(data):
+                  if not isinstance(item, dict):
+                      print(f"Warning: Item at index {index} is not a dictionary, skipping")
+                      continue
+                  if "cookie" not in item or item["cookie"] != new_cookie:
+                      old_cookie = item.get("cookie", "none")
+                      item["cookie"] = new_cookie
+                      updated = True
+                      print(f"Updated/Added cookie for {item.get('name', 'unknown')} (index {index}): {old_cookie} -> {new_cookie}")
           elif isinstance(data, dict):
-            if "cookie" not in data:
-              print(f"Warning: No cookie field in Zootv.json dictionary, adding cookie field")
-              data["cookie"] = new_cookie
-              updated = True
-              print(f"Added cookie: {new_cookie}")
-            else:
-              old_cookie = data["cookie"]
-              data["cookie"] = new_cookie
-              updated = True
-              print(f"Updated cookie: {old_cookie} -> {new_cookie}")
+              if "cookie" not in data or data["cookie"] != new_cookie:
+                  old_cookie = data.get("cookie", "none")
+                  data["cookie"] = new_cookie
+                  updated = True
+                  print(f"Updated/Added cookie: {old_cookie} -> {new_cookie}")
           else:
-            print("Error: Zootv.json is neither a list nor a dictionary")
-            exit(1)
+              print("Error: Zootv.json is neither a list nor a dictionary")
+              exit(1)
 
           if not updated:
-            print("Error: No cookie fields were updated or added in Zootv.json")
-            exit(1)
+              print("No changes needed in Zootv.json")
+              exit(0)
 
-          # Write updated JSON back
+          # Write updated JSON
           try:
-            with open(json_file, 'w') as f:
-              json.dump(data, f, indent=2)
-              f.write('\n') # Ensure file ends with newline
-            print(f"Successfully wrote updated {json_file}")
+              with open(json_file, 'w') as f:
+                  json.dump(data, f, indent=2)
+                  f.write('\n') # Ensure newline at EOF
+              print(f"Successfully updated {json_file}")
           except Exception as e:
-            print(f"Error writing to {json_file}: {e}")
-            exit(1)
-
-          # Debug: Verify file content after writing
-          try:
-            with open(json_file, 'r') as f:
-              updated_content = f.read()
-            print(f"Updated {json_file} content:\n{updated_content[:5000]}")
-          except Exception as e:
-            print(f"Error reading updated {json_file}: {e}")
-            exit(1)
+              print(f"Error writing to {json_file}: {e}")
+              exit(1)
           EOF
 
-      # Commit and push changes with github-actions bot
+      # Commit and push changes only if there are updates
       - name: Commit and push changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Zootv.json
-          git commit -m "Update cookies in Zootv.json (Run: $(date -u '+%Y-%m-%d %H:%M:%S UTC'))" --allow-empty
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "Update cookies in Zootv.json (Run: $(date -u '+%Y-%m-%d %H:%M:%S UTC'))"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
