@@ -97,7 +97,7 @@ jobs:
           # Debug: Print JSON structure
           print(f"Parsed JSON structure:\n{json.dumps(data, indent=2)[:1000]}")
 
-          # Update cookie field
+          # Update cookie field for all entries
           updated = False
           if isinstance(data, list):
               for index, item in enumerate(data):
@@ -105,25 +105,19 @@ jobs:
                       print(f"Warning: Item at index {index} is not a dictionary, skipping")
                       continue
                   old_cookie = item.get("cookie")
-                  if old_cookie != new_cookie:
-                      item["cookie"] = new_cookie
-                      updated = True
-                      print(f"Updated cookie for {item.get('name', 'unknown')} (index {index}): {old_cookie} -> {new_cookie}")
-                  else:
-                      print(f"No update needed for {item.get('name', 'unknown')} (index {index}): cookie unchanged")
+                  item["cookie"] = new_cookie
+                  updated = True
+                  print(f"Set cookie for {item.get('name', 'unknown')} (index {index}): {old_cookie} -> {new_cookie}")
           elif isinstance(data, dict):
               old_cookie = data.get("cookie")
-              if old_cookie != new_cookie:
-                  data["cookie"] = new_cookie
-                  updated = True
-                  print(f"Updated cookie: {old_cookie} -> {new_cookie}")
-              else:
-                  print("No update needed: cookie unchanged")
+              data["cookie"] = new_cookie
+              updated = True
+              print(f"Set cookie: {old_cookie} -> {new_cookie}")
           else:
               print("Error: Ziotv.json is neither a list nor a dictionary")
               exit(1)
 
-          # Write updated JSON back only if changes were made
+          # Write updated JSON back if changes were made
           if updated:
               try:
                   with open(json_file, 'w', encoding='utf-8') as f:
@@ -134,8 +128,8 @@ jobs:
                   print(f"Error writing to {json_file}: {e}")
                   exit(1)
           else:
-              print("No changes to Ziotv.json; skipping write")
-              exit(0)
+              print("Error: No cookie fields were updated in Ziotv.json")
+              exit(1)
           EOF
 
       # Debug: Check updated Ziotv.json content
@@ -156,7 +150,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Ziotv.json
           if git diff --staged --quiet; then
-            echo "No changes to commit"
+            echo "No changes to commit (file unchanged)"
             exit 0
           fi
           git commit -m "Update cookies in Ziotv.json (Run: $(date -u '+%Y-%m-%d %H:%M:%S UTC'))"
