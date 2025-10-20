@@ -2,7 +2,7 @@ name: Update JioTV Playlist Cookies
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 */6 * * *' # Runs every 6 hours
   workflow_dispatch:
 
 permissions:
@@ -33,6 +33,7 @@ jobs:
           import requests
           from urllib.parse import urlparse, parse_qs
           import time
+          import os
 
           # Configuration
           API_URL = "https://jo-json.vodep39240327.workers.dev"
@@ -46,15 +47,18 @@ jobs:
                   cookie = query.get("__hdnea__", [None])[0]
                   if cookie:
                       return f"__hdnea__={cookie}"
+                  print(f"No __hdnea__ cookie found in URL: {url}")
                   return None
-              except:
+              except Exception as e:
+                  print(f"Error parsing URL: {e}")
                   return None
 
           def fetch_single_cookie(max_retries=3, delay=5):
               """Fetch a single __hdnea__ cookie from the API with retries."""
               for attempt in range(max_retries):
                   try:
-                      response = requests.get(API_URL, timeout=10)
+                      print(f"Attempt {attempt + 1}/{max_retries} - Fetching data from {API_URL}")
+                      response = requests.get(API_URL, timeout=15)
                       response.raise_for_status()
                       data = response.json()
                       print(f"Fetched API data for {len(data)} channels")
@@ -78,28 +82,34 @@ jobs:
               return None
 
           def update_playlist_cookies():
+              # Check if playlist file exists
+              if not os.path.exists(PLAYLIST_FILE):
+                  print(f"Error: {PLAYLIST_FILE} not found in repository")
+                  exit(1)
+
               try:
                   with open(PLAYLIST_FILE, "r") as file:
                       playlist = json.load(file)
+                  print(f"Successfully loaded {PLAYLIST_FILE} with {len(playlist)} channels")
               except Exception as e:
                   print(f"Error reading {PLAYLIST_FILE}: {e}")
-                  return
+                  exit(1)
 
               new_cookie = fetch_single_cookie()
               if not new_cookie:
                   print("No valid cookie retrieved from API, exiting.")
-                  return
+                  exit(1)
 
               updated = False
               for channel in playlist:
-                  channel_name = channel.get("name")
-                  if not channel_name:
-                      continue
+                  channel_name = channel.get("name", "Unknown")
                   old_cookie = channel.get("cookie")
                   if new_cookie != old_cookie:
                       channel["cookie"] = new_cookie
                       updated = True
                       print(f"Updated cookie for {channel_name} to {new_cookie}")
+                  else:
+                      print(f"No update needed for {channel_name} (cookie unchanged)")
 
               if updated:
                   try:
@@ -108,8 +118,16 @@ jobs:
                       print(f"Successfully updated {PLAYLIST_FILE}")
                   except Exception as e:
                       print(f"Error writing to {PLAYLIST_FILE}: {e}")
+                      exit(1)
               else:
-                  print("No cookie updates required")
+                  print("No cookie updates required, but forcing file write to ensure update")
+                  try:
+                      with open(PLAYLIST_FILE, "w") as file:
+                          json.dump(playlist, file, indent=2)
+                      print(f"Force wrote {PLAYLIST_FILE} to ensure update")
+                  except Exception as e:
+                      print(f"Error force writing to {PLAYLIST_FILE}: {e}")
+                      exit(1)
 
           if __name__ == "__main__":
               update_playlist_cookies()
@@ -121,11 +139,12 @@ jobs:
           git config --global user.email 'action@github.com'
           git add Jiotv.json
           if git diff --quiet && git diff --staged --quiet; then
-            echo "No changes to commit; cookie unchanged or file unmodified"
+            echo "No changes to commit; file content unchanged"
+            exit 0
           else
-            git commit -m "Update single __hdnea__ cookie for all channels in Jiotv.json from API"
+            git commit -m "Update __hdnea__ cookie for all channels in Jiotv.json from API"
             git push
-            echo "Changes committed and pushed"
+            echo "Changes committed and pushed successfully"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
