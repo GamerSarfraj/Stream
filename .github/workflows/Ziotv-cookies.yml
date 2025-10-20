@@ -14,7 +14,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Full history to ensure git can detect changes
+          fetch-depth: 0 # Full history for git operations
 
       # Set up Python
       - name: Set up Python
@@ -36,137 +36,116 @@ jobs:
           import json
           import re
           import os
-          import glob
 
           # URL to fetch cookies
           m3u_url = "https://raw.githubusercontent.com/alex8875/m3u/refs/heads/main/jtv.m3u"
 
           # Fetch the m3u file
           try:
-            response = requests.get(m3u_url, timeout=10)
-            response.raise_for_status()
-            m3u_content = response.text
+              response = requests.get(m3u_url, timeout=10)
+              response.raise_for_status()
+              m3u_content = response.text
           except requests.RequestException as e:
-            print(f"Error fetching m3u file: {e}")
-            exit(1)
-
-          # Debug: Print m3u content (first 5000 chars)
-          print(f"m3u content (first 5000 chars):\n{m3u_content[:5000]}")
+              print(f"Error fetching m3u file: {e}")
+              exit(1)
 
           # Extract the first __hdnea__ cookie
           cookie_pattern = r'__hdnea__=[^\s"\n;),]+'
           cookie_match = re.search(cookie_pattern, m3u_content)
           if not cookie_match:
-            fallback_pattern = r'__hdnea__=[^"\n]+'
-            cookie_match = re.search(fallback_pattern, m3u_content)
-            if not cookie_match:
-              print("Error: No __hdnea__ cookie found in the m3u file")
-              exit(1)
+              fallback_pattern = r'__hdnea__=[^"\n]+'
+              cookie_match = re.search(fallback_pattern, m3u_content)
+              if not cookie_match:
+                  print("Error: No __hdnea__ cookie found in the m3u file")
+                  exit(1)
           new_cookie = cookie_match.group(0).rstrip(';').strip()
-
-          # Debug: Print extracted cookie
           print(f"Extracted cookie: {new_cookie}")
 
           # Path to Ziotv.json
           json_file = "Ziotv.json"
 
-          # Check for Ziotv.json (case-sensitive and case-insensitive)
-          files_in_dir = glob.glob("[Zz][Ii][Oo][Tt][Vv].[Jj][Ss][Oo][Nn]") + os.listdir('.')
-          print(f"Files in current directory: {files_in_dir}")
+          # Check if Ziotv.json exists
           if not os.path.exists(json_file):
-            print(f"Error: {json_file} not found in repository root")
-            exit(1)
-
-          # Verify file is writable
-          try:
-            with open(json_file, 'a') as f:
-              pass  # Test append mode to confirm writability
-          except Exception as e:
-            print(f"Error: {json_file} is not writable: {e}")
-            exit(1)
+              print(f"Error: {json_file} not found")
+              exit(1)
 
           # Read Ziotv.json
           try:
-            with open(json_file, 'r') as f:
-              file_content = f.read()
-              if not file_content.strip():
-                print(f"Error: {json_file} is empty")
-                exit(1)
-              print(f"Raw {json_file} content:\n{file_content[:5000]}")
-              data = json.loads(file_content)
+              with open(json_file, 'r') as f:
+                  data = json.load(f)
           except json.JSONDecodeError as e:
-            print(f"Error: Invalid JSON in {json_file}: {e}")
-            exit(1)
+              print(f"Error: Invalid JSON in {json_file}: {e}")
+              exit(1)
           except Exception as e:
-            print(f"Error reading {json_file}: {e}")
-            exit(1)
+              print(f"Error reading {json_file}: {e}")
+              exit(1)
 
-          # Debug: Print parsed JSON structure
-          print(f"Parsed JSON data:\n{json.dumps(data, indent=2)[:5000]}")
-
-          # Update cookie field for all channels
+          # Flag to track if updates were made
           updated = False
+
+          # Update cookie field
           if isinstance(data, list):
-            for index, item in enumerate(data):
-              if not isinstance(item, dict):
-                print(f"Warning: Item at index {index} is not a dictionary, skipping")
-                continue
-              if "cookie" not in item:
-                print(f"Warning: No cookie field in item at index {index} (name: {item.get('name', 'unknown')}), adding cookie field")
-                item["cookie"] = new_cookie
-                updated = True
-                print(f"Added cookie for {item.get('name', 'unknown')} (index {index}): {new_cookie}")
-              else:
-                old_cookie = item["cookie"]
-                item["cookie"] = new_cookie
-                updated = True
-                print(f"Updated cookie for {item.get('name', 'unknown')} (index {index}): {old_cookie} -> {new_cookie}")
+              for index, item in enumerate(data):
+                  if not isinstance(item, dict):
+                      print(f"Warning: Item at index {index} is not a dictionary, skipping")
+                      continue
+                  old_cookie = item.get("cookie")
+                  if old_cookie != new_cookie:
+                      item["cookie"] = new_cookie
+                      updated = True
+                      print(f"Updated cookie for {item.get('name', 'unknown')} (index {index}): {old_cookie} -> {new_cookie}")
+                  else:
+                      print(f"No update needed for {item.get('name', 'unknown')} (index {index}): cookie unchanged")
           elif isinstance(data, dict):
-            if "cookie" not in data:
-              print(f"Warning: No cookie field in Ziotv.json dictionary, adding cookie field")
-              data["cookie"] = new_cookie
-              updated = True
-              print(f"Added cookie: {new_cookie}")
-            else:
-              old_cookie = data["cookie"]
-              data["cookie"] = new_cookie
-              updated = True
-              print(f"Updated cookie: {old_cookie} -> {new_cookie}")
+              old_cookie = data.get("cookie")
+              if old_cookie != new_cookie:
+                  data["cookie"] = new_cookie
+                  updated = True
+                  print(f"Updated cookie: {old_cookie} -> {new_cookie}")
+              else:
+                  print("No update needed: cookie unchanged")
           else:
-            print("Error: Ziotv.json is neither a list nor a dictionary")
-            exit(1)
+              print("Error: Ziotv.json is neither a list nor a dictionary")
+              exit(1)
 
-          if not updated:
-            print("Error: No cookie fields were updated or added in Ziotv.json")
-            exit(1)
+          # Write updated JSON back only if changes were made
+          if updated:
+              try:
+                  with open(json_file, 'w') as f:
+                      json.dump(data, f, indent=2)
+                      f.write('\n') # Ensure file ends with newline
+                  print(f"Successfully updated {json_file}")
+              except Exception as e:
+                  print(f"Error writing to {json_file}: {e}")
+                  exit(1)
+          else:
+              print("No changes to Ziotv.json; skipping write")
+              exit(0)
 
-          # Write updated JSON back
-          try:
-            with open(json_file, 'w') as f:
-              json.dump(data, f, indent=2)
-              f.write('\n') # Ensure file ends with newline
-            print(f"Successfully wrote updated {json_file}")
-          except Exception as e:
-            print(f"Error writing to {json_file}: {e}")
-            exit(1)
-
-          # Debug: Verify file content after writing
-          try:
-            with open(json_file, 'r') as f:
-              updated_content = f.read()
-            print(f"Updated {json_file} content:\n{updated_content[:5000]}")
-          except Exception as e:
-            print(f"Error reading updated {json_file}: {e}")
-            exit(1)
           EOF
 
-      # Commit and push changes with github-actions bot
+      # Verify file content after update
+      - name: Verify updated Ziotv.json
+        run: |
+          if [ -f Ziotv.json ]; then
+            echo "Contents of Ziotv.json after update:"
+            cat Ziotv.json
+          else
+            echo "Error: Ziotv.json not found after update"
+            exit 1
+          fi
+
+      # Commit and push changes
       - name: Commit and push changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Ziotv.json
-          git commit -m "Update cookies in Ziotv.json (Run: $(date -u '+%Y-%m-%d %H:%M:%S UTC'))" --allow-empty
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "Update cookies in Ziotv.json (Run: $(date -u '+%Y-%m-%d %H:%M:%S UTC'))"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
