@@ -28,6 +28,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests
 
+      # Debug: Check initial Ziotv.json content
+      - name: Check initial Ziotv.json
+        run: |
+          echo "Initial Ziotv.json content:"
+          if [ -f Ziotv.json ]; then
+            cat Ziotv.json
+          else
+            echo "Error: Ziotv.json not found"
+            exit 1
+          fi
+
       # Fetch cookies and update Ziotv.json
       - name: Update cookies in Ziotv.json
         run: |
@@ -48,6 +59,9 @@ jobs:
           except requests.RequestException as e:
               print(f"Error fetching m3u file: {e}")
               exit(1)
+
+          # Debug: Print m3u content snippet
+          print(f"m3u content (first 1000 chars):\n{m3u_content[:1000]}")
 
           # Extract the first __hdnea__ cookie
           cookie_pattern = r'__hdnea__=[^\s"\n;),]+'
@@ -71,7 +85,7 @@ jobs:
 
           # Read Ziotv.json
           try:
-              with open(json_file, 'r') as f:
+              with open(json_file, 'r', encoding='utf-8') as f:
                   data = json.load(f)
           except json.JSONDecodeError as e:
               print(f"Error: Invalid JSON in {json_file}: {e}")
@@ -80,10 +94,11 @@ jobs:
               print(f"Error reading {json_file}: {e}")
               exit(1)
 
-          # Flag to track if updates were made
-          updated = False
+          # Debug: Print JSON structure
+          print(f"Parsed JSON structure:\n{json.dumps(data, indent=2)[:1000]}")
 
           # Update cookie field
+          updated = False
           if isinstance(data, list):
               for index, item in enumerate(data):
                   if not isinstance(item, dict):
@@ -111,9 +126,9 @@ jobs:
           # Write updated JSON back only if changes were made
           if updated:
               try:
-                  with open(json_file, 'w') as f:
+                  with open(json_file, 'w', encoding='utf-8') as f:
                       json.dump(data, f, indent=2)
-                      f.write('\n') # Ensure file ends with newline
+                      f.write('\n')
                   print(f"Successfully updated {json_file}")
               except Exception as e:
                   print(f"Error writing to {json_file}: {e}")
@@ -121,14 +136,13 @@ jobs:
           else:
               print("No changes to Ziotv.json; skipping write")
               exit(0)
-
           EOF
 
-      # Verify file content after update
-      - name: Verify updated Ziotv.json
+      # Debug: Check updated Ziotv.json content
+      - name: Check updated Ziotv.json
         run: |
+          echo "Updated Ziotv.json content:"
           if [ -f Ziotv.json ]; then
-            echo "Contents of Ziotv.json after update:"
             cat Ziotv.json
           else
             echo "Error: Ziotv.json not found after update"
