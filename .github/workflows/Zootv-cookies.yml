@@ -2,36 +2,35 @@ name: Update JioTV Cookies
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Runs every 6 hours (0:00, 6:00, 12:00, 18:00 UTC)
-  workflow_dispatch: # Allows manual triggering
+    - cron: '0 */6 * * *' # Every 6 hours
+  workflow_dispatch:
 
 jobs:
   update-cookies:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Ensure write access for pushing changes
+      contents: write
+    outputs:
+      updated: ${{ steps.update.outputs.updated }}
 
     steps:
-      # Checkout the repository
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Full history for git operations
+          fetch-depth: 0
 
-      # Set up Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
-      # Install requests and tenacity libraries
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests tenacity
 
-      # Fetch cookies and update Zootv.json
       - name: Update cookies in Zootv.json
+        id: update
         run: |
           python - <<EOF
           import requests
@@ -40,10 +39,8 @@ jobs:
           import os
           from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-          # URL to fetch cookies
           m3u_url = "https://raw.githubusercontent.com/alex8875/m3u/refs/heads/main/jstar.m3u"
 
-          # Retry decorator for network requests
           @retry(
               stop=stop_after_attempt(3),
               wait=wait_exponential(multiplier=1, min=4, max=10),
@@ -54,102 +51,80 @@ jobs:
               response.raise_for_status()
               return response.text
 
-          # Fetch the m3u file with retries
           try:
               m3u_content = fetch_m3u()
           except requests.RequestException as e:
-              print(f"Error fetching m3u file after retries: {e}")
+              print(f"Error fetching m3u: {e}")
               exit(1)
 
-          # Extract the first __hdnea__ cookie
-          cookie_pattern = r'__hdnea__=[^\s"\n;),]+'
-          cookie_match = re.search(cookie_pattern, m3u_content)
+          # Extract __hdnea__ cookie
+          cookie_match = re.search(r'__hdnea__=[^\s"\n;),]+', m3u_content)
           if not cookie_match:
-              fallback_pattern = r'__hdnea__=[^"\n;]+'
-              cookie_match = re.search(fallback_pattern, m3u_content)
-              if not cookie_match:
-                  print("Error: No __hdnea__ cookie found in the m3u file")
-                  exit(1)
+              cookie_match = re.search(r'__hdnea__=[^"\n;]+', m3u_content)
+          if not cookie_match:
+              print("Error: No __hdnea__ cookie found")
+              exit(1)
+
           new_cookie = cookie_match.group(0).rstrip(';').strip()
           print(f"Extracted cookie: {new_cookie}")
 
-          # Path to Zootv.json
           json_file = "Zootv.json"
           if not os.path.exists(json_file):
-              print(f"Error: {json_file} not found in repository root")
+              print(f"Error: {json_file} not found")
               exit(1)
 
-          # Verify file is writable
-          try:
-              with open(json_file, 'a') as f:
-                  pass  # Test writability
-          except Exception as e:
-              print(f"Error: {json_file} is not writable: {e}")
-              exit(1)
-
-          # Read Zootv.json
+          # Read current JSON
           try:
               with open(json_file, 'r') as f:
-                  file_content = f.read()
-                  if not file_content.strip():
-                      print(f"Error: {json_file} is empty")
-                      exit(1)
-                  data = json.loads(file_content)
+                  data = json.load(f)
           except json.JSONDecodeError as e:
-              print(f"Error: Invalid JSON in {json_file}: {e}")
-              exit(1)
-          except Exception as e:
-              print(f"Error reading {json_file}: {e}")
+              print(f"Invalid JSON: {e}")
               exit(1)
 
-          # Update cookie field
+          # Check if update is needed
           updated = False
           if isinstance(data, list):
-              for index, item in enumerate(data):
-                  if not isinstance(item, dict):
-                      print(f"Warning: Item at index {index} is not a dictionary, skipping")
-                      continue
-                  if "cookie" not in item or item["cookie"] != new_cookie:
-                      old_cookie = item.get("cookie", "none")
+              for i, item in enumerate(data):
+                  if isinstance(item, dict) and item.get("cookie") != new_cookie:
+                      print(f"Updating item {i}: {item.get('name', 'unknown')}")
                       item["cookie"] = new_cookie
                       updated = True
-                      print(f"Updated/Added cookie for {item.get('name', 'unknown')} (index {index}): {old_cookie} -> {new_cookie}")
           elif isinstance(data, dict):
-              if "cookie" not in data or data["cookie"] != new_cookie:
-                  old_cookie = data.get("cookie", "none")
+              if data.get("cookie") != new_cookie:
+                  print(f"Updating root cookie")
                   data["cookie"] = new_cookie
                   updated = True
-                  print(f"Updated/Added cookie: {old_cookie} -> {new_cookie}")
           else:
-              print("Error: Zootv.json is neither a list nor a dictionary")
+              print("Error: Invalid Zootv.json structure")
               exit(1)
 
           if not updated:
-              print("No changes needed in Zootv.json")
+              print("No changes needed")
+              echo "updated=false" >> $GITHUB_OUTPUT
               exit(0)
 
           # Write updated JSON
-          try:
-              with open(json_file, 'w') as f:
-                  json.dump(data, f, indent=2)
-                  f.write('\n') # Ensure newline at EOF
-              print(f"Successfully updated {json_file}")
-          except Exception as e:
-              print(f"Error writing to {json_file}: {e}")
-              exit(1)
+          with open(json_file, 'w') as f:
+              json.dump(data, f, indent=2)
+              f.write('\n')
+          print("Zootv.json updated")
+
+          echo "updated=true" >> $GITHUB_OUTPUT
           EOF
 
-      # Commit and push changes only if there are updates
-      - name: Commit and push changes
+      # Only commit and push if changes were made
+      - name: Commit and push if updated
+        if: steps.update.outputs.updated == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Zootv.json
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-          git commit -m "Update cookies in Zootv.json (Run: $(date -u '+%Y-%m-%d %H:%M:%S UTC'))"
+          git commit -m "Auto-update JioTV cookie [$(date -u '+%Y-%m-%d %H:%M UTC')]"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Optional: Notify if no update
+      - name: No changes detected
+        if: steps.update.outputs.updated != 'true'
+        run: echo "No cookie update needed. Skipping commit."
