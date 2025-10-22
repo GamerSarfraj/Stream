@@ -150,8 +150,12 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Zootv.json
+          git add -f Zootv.json
+          if git diff --cached --quiet; then
+            echo "No actual changes to commit"
+            exit 0
+          fi
           git commit -m "Update cookies in Zootv.json (Run: $(date -u '+%Y-%m-%d %H:%M:%S UTC'))"
-          git push
+          git push origin HEAD:${{ github.ref }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
