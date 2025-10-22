@@ -131,11 +131,13 @@ jobs:
         run: |
           git config --global user.name 'GitHub Action'
           git config --global user.email 'action@github.com'
+
+          # 1. Stage the file first
           git add Jiotv.json
 
-          # Check if file actually changed after update
-          if git diff --staged --quiet; then
-            echo "No changes in Jiotv.json (cookie same), skipping commit"
+          # 2. Check if the staged file actually changed
+          if git diff --cached --quiet; then
+            echo "No changes in Jiotv.json (cookie unchanged), skipping commit"
             exit 0
           else
             git commit -m "Update __hdnea__ cookie for all channels in Jiotv.json from API"
