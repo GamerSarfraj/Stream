@@ -100,49 +100,39 @@ jobs:
                   print("No valid cookie retrieved from API, exiting.")
                   exit(1)
 
-              updated = False
+              # Always update the cookie for all channels
               for channel in playlist:
                   channel_name = channel.get("name", "Unknown")
                   old_cookie = channel.get("cookie")
+                  channel["cookie"] = new_cookie
                   if new_cookie != old_cookie:
-                      channel["cookie"] = new_cookie
-                      updated = True
-                      print(f"Updated cookie for {channel_name} to {new_cookie}")
+                      print(f"Updated cookie for {channel_name} from {old_cookie} to {new_cookie}")
                   else:
-                      print(f"No update needed for {channel_name} (cookie unchanged)")
+                      print(f"Cookie for {channel_name} was already {new_cookie}")
 
-              if updated:
-                  try:
-                      with open(PLAYLIST_FILE, "w") as file:
-                          json.dump(playlist, file, indent=2)
-                      print(f"Successfully updated {PLAYLIST_FILE}")
-                  except Exception as e:
-                      print(f"Error writing to {PLAYLIST_FILE}: {e}")
-                      exit(1)
-              else:
-                  print("No cookie updates required. No changes made to file.")
-                  # Force write REMOVED — no unnecessary commit
+              try:
+                  with open(PLAYLIST_FILE, "w") as file:
+                      json.dump(playlist, file, indent=2)
+                  print(f"Successfully updated {PLAYLIST_FILE}")
+              except Exception as e:
+                  print(f"Error writing to {PLAYLIST_FILE}: {e}")
+                  exit(1)
 
           if __name__ == "__main__":
               update_playlist_cookies()
           '
 
-      - name: Commit and push if cookie updated
+      - name: Commit and push updated cookies
         run: |
           git config --global user.name 'GitHub Action'
           git config --global user.email 'action@github.com'
 
-          # 1. Stage the file first
+          # Stage the file
           git add Jiotv.json
 
-          # 2. Check if the staged file actually changed
-          if git diff --cached --quiet; then
-            echo "No changes in Jiotv.json (cookie unchanged), skipping commit"
-            exit 0
-          else
-            git commit -m "Update __hdnea__ cookie for all channels in Jiotv.json from API"
-            git push
-            echo "Changes committed and pushed successfully"
-          fi
+          # Commit and push always (since we always update)
+          git commit -m "Update __hdnea__ cookie for all channels in Jiotv.json from API"
+          git push
+          echo "Changes committed and pushed successfully"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
