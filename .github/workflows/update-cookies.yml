@@ -130,9 +130,9 @@ jobs:
           # Stage the file
           git add Jiotv.json
 
-          # Commit and push always (since we always update)
-          git commit -m "Update __hdnea__ cookie for all channels in Jiotv.json from API"
+          # Commit and push always (allow empty commits too)
+          git commit --allow-empty -m "Update __hdnea__ cookie for all channels in Jiotv.json from API"
           git push
-          echo "Changes committed and pushed successfully"
+          echo "Changes committed and pushed successfully (even if empty)"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
