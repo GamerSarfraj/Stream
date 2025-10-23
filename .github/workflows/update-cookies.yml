@@ -14,7 +14,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkoutag/checkout@v4
+        uses: actions/checkout@v4  # ✅ Fixed: No 'ag' typo
         with:
           fetch-depth: 0
 
