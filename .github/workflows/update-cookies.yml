@@ -14,7 +14,9 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkoutag/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,7 +28,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests
 
-      - name: Update cookies in Jiotv.json
+      - name: Update cookies in Jiotv.json (Clean JSON)
         run: |
           python -c '
           import json
@@ -35,104 +37,63 @@ jobs:
           import time
           import os
 
-          # Configuration
           API_URL = "https://jo-json.vodep39240327.workers.dev"
           PLAYLIST_FILE = "Jiotv.json"
 
-          def extract_hdnea_from_url(url):
-              """Extract __hdnea__ cookie from MPD URL."""
+          def extract_hdnea(url):
               try:
-                  parsed = urlparse(url)
-                  query = parse_qs(parsed.query)
+                  query = parse_qs(urlparse(url).query)
                   cookie = query.get("__hdnea__", [None])[0]
-                  if cookie:
-                      return f"__hdnea__={cookie}"
-                  print(f"No __hdnea__ cookie found in URL: {url}")
-                  return None
-              except Exception as e:
-                  print(f"Error parsing URL: {e}")
+                  return f"__hdnea__={cookie}" if cookie else None
+              except:
                   return None
 
-          def fetch_single_cookie(max_retries=3, delay=5):
-              """Fetch a single __hdnea__ cookie from the API with retries."""
-              for attempt in range(max_retries):
+          def get_cookie():
+              for _ in range(3):
                   try:
-                      print(f"Attempt {attempt + 1}/{max_retries} - Fetching data from {API_URL}")
-                      response = requests.get(API_URL, timeout=15)
-                      response.raise_for_status()
-                      data = response.json()
-                      print(f"Fetched API data for {len(data)} channels")
-                      for channel_id, info in data.items():
+                      r = requests.get(API_URL, timeout=15)
+                      r.raise_for_status()
+                      for info in r.json().values():
                           if isinstance(info, dict) and "url" in info:
-                              cookie = extract_hdnea_from_url(info["url"])
-                              if cookie:
-                                  print(f"Using cookie from channel ID {channel_id}: {cookie}")
-                                  return cookie
-                      print("No valid cookies found in API response")
-                      return None
-                  except requests.RequestException as e:
-                      print(f"Attempt {attempt + 1}/{max_retries} - Error fetching data from {API_URL}: {e}")
-                      if attempt < max_retries - 1:
-                          time.sleep(delay)
-                      continue
-                  except ValueError as e:
-                      print(f"Error parsing JSON from {API_URL}: {e}")
-                      return None
-              print(f"Failed to fetch cookie after {max_retries} attempts")
+                              c = extract_hdnea(info["url"])
+                              if c: return c
+                  except: time.sleep(5)
               return None
 
-          def update_playlist_cookies():
-              # Check if playlist file exists
-              if not os.path.exists(PLAYLIST_FILE):
-                  print(f"Error: {PLAYLIST_FILE} not found in repository")
-                  exit(1)
+          if not os.path.exists(PLAYLIST_FILE):
+              print("File not found!")
+              exit(1)
 
-              try:
-                  with open(PLAYLIST_FILE, "r") as file:
-                      playlist = json.load(file)
-                  print(f"Successfully loaded {PLAYLIST_FILE} with {len(playlist)} channels")
-              except Exception as e:
-                  print(f"Error reading {PLAYLIST_FILE}: {e}")
-                  exit(1)
+          with open(PLAYLIST_FILE) as f:
+              data = json.load(f)
 
-              new_cookie = fetch_single_cookie()
-              if not new_cookie:
-                  print("No valid cookie retrieved from API, exiting.")
-                  exit(1)
+          cookie = get_cookie()
+          if not cookie:
+              print("Failed to get cookie")
+              exit(1)
 
-              # Always update the cookie for all channels
-              for channel in playlist:
-                  channel_name = channel.get("name", "Unknown")
-                  old_cookie = channel.get("cookie")
-                  channel["cookie"] = new_cookie
-                  if new_cookie != old_cookie:
-                      print(f"Updated cookie for {channel_name} from {old_cookie} to {new_cookie}")
-                  else:
-                      print(f"Cookie for {channel_name} was already {new_cookie}")
+          for ch in data:
+              ch["cookie"] = cookie
 
-              try:
-                  with open(PLAYLIST_FILE, "w") as file:
-                      json.dump(playlist, file, indent=2)
-                  print(f"Successfully updated {PLAYLIST_FILE}")
-              except Exception as e:
-                  print(f"Error writing to {PLAYLIST_FILE}: {e}")
-                  exit(1)
+          with open(PLAYLIST_FILE, "w") as f:
+              json.dump(data, f, indent=2, sort_keys=True)
+              f.write("\n")  # Only one newline at end
 
-          if __name__ == "__main__":
-              update_playlist_cookies()
+          print("Jiotv.json updated with new cookie (clean format)")
           '
 
-      - name: Commit and push updated cookies
+      - name: Commit and Push (Force Update via Committer Date)
         run: |
           git config --global user.name 'GitHub Action'
           git config --global user.email 'action@github.com'
 
-          # Stage the file
           git add Jiotv.json
 
-          # Commit and push always (allow empty commits too)
-          git commit --allow-empty -m "Update __hdnea__ cookie for all channels in Jiotv.json from API"
+          # Force commit even if content is same — by changing committer date
+          export GIT_COMMITTER_DATE="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          git commit --date="$GIT_COMMITTER_DATE" -m "Auto update: __hdnea__ cookie refreshed"
+
           git push
-          echo "Changes committed and pushed successfully (even if empty)"
+          echo "File updated and pushed (clean JSON, no extra content)"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
